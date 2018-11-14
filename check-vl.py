@@ -4,22 +4,12 @@ import argparse
 import json
 import logging
 import os
+from string import Template
 import subprocess
-import threading
+import tempfile
 import time
+import urllib2
 
-PORT = 8000
-
-PUBLISHER_KEYS = {
-  "ED2677ABFFD1B33AC6FBC3062B71F1E8397C1505E1C42C64D11AD1B28FF73F4734": {
-    "name": "production",
-    "site": "https://vl.ripple.com"
-  },
-  "ED264807102805220DA0F312E71FC2C69E1552C9C5790F6C25E3729DEB573D5860": {
-    "name": "altnet",
-    "site": "https://vl.altnet.rippletest.net"
-  }
-}
 
 DOCKER_IMAGE = "bwilsonripple/rippled:latest"
 
@@ -27,9 +17,13 @@ def run_command(args):
     logging.debug(" ".join(args))
     return subprocess.check_output(args)
 
-def get_validators(valTxt):
+def get_validators(siteUri, publisherKey):
+    with tempfile.NamedTemporaryFile(delete=False) as tmpValTxt:
+        s = Template('[validator_list_sites]\n$site_uri\n[validator_list_keys]\n$list_key')
+        tmpValTxt.write(s.substitute(site_uri=siteUri, list_key=publisherKey))
+
     run_command(["docker", "run", "-d", "--rm", "-v",
-        "{0}/{1}:/opt/ripple/etc/validators.txt".format(os.getcwd(), valTxt),
+        "{0}:/opt/ripple/etc/validators.txt".format(tmpValTxt.name),
         "--net=host", "--name", "myrippled", DOCKER_IMAGE])
     time.sleep(3)
 
@@ -42,6 +36,8 @@ def get_validators(valTxt):
     logging.debug(validators)
 
     run_command(["docker", "stop", "myrippled"])
+
+    os.unlink(tmpValTxt.name)
 
     ret = json.loads(validators)["result"]
 
@@ -59,24 +55,21 @@ def stop_server():
     run_command(["docker", "stop", "myserver"])
 
 def main(args):
+    print "Comparing {0} with existing list at {1}\n".format(
+        args.vl_file, args.vl_site)
+
+    req = urllib2.Request(args.vl_site, headers={'User-Agent': "Custom User-Agent"})
+    contents = urllib2.urlopen(req).read()
+    site_unl = json.loads(contents)
+
     with open(args.vl_file, 'r') as json_data:
         unl = json.load(json_data)
 
-        if unl["public_key"] not in PUBLISHER_KEYS:
-            logging.error("Unrecognized publisher public key")
-            return
-
-        print "Comparing {0} with existing {1} list at {2}\n".format(
-            args.vl_file, PUBLISHER_KEYS[unl["public_key"]]["name"],
-            PUBLISHER_KEYS[unl["public_key"]]["site"])
-
-        oldValidators = get_validators(
-            PUBLISHER_KEYS[unl["public_key"]]["name"] + "/validators.txt")
+        oldValidators = get_validators(args.vl_site, site_unl['public_key'])
 
         serve_vl(args.vl_file)
 
-        newValidators = get_validators(
-            PUBLISHER_KEYS[unl["public_key"]]["name"] + "/local-validators.txt")
+        newValidators = get_validators("http://127.0.0.1:8000/validators", unl['public_key'])
 
         stop_server()
 
@@ -106,8 +99,11 @@ parser = argparse.ArgumentParser(
 
 parser.add_argument("-v", "--verbose", help="verbose logging",
     action="store_true")
+parser.add_argument("--vl_site",
+    help="URI of existing published validator list (default: https://vl.ripple.com)",
+    default="https://vl.ripple.com")
 
-requiredNamed = parser.add_argument_group("required named arguments")
+requiredNamed = parser.add_argument_group("required arguments")
 requiredNamed.add_argument("--vl_file",
     help="path to file containing signed validator list", required=True)
 

@@ -2,7 +2,7 @@
 
 Checks signed XRP Ledger validator list against existing published list.
 
-Runs rippled in a Docker container. First using the existing published list, then using the provided list.
+Runs rippled in a Docker container, first using the existing published list then using the provided list.
 
 ## Dependencies
 
@@ -13,5 +13,5 @@ Runs rippled in a Docker container. First using the existing published list, the
 Save the signed validator list to a local file and run:
 
 ```
-sudo ./check-vl --vl_file /path/to/your/vl/file
+sudo ./check-vl.py --vl_file /path/to/your/vl/file --vl_site https://vl.ripple.com
 ```
